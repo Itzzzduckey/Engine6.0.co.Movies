@@ -220,7 +220,8 @@
             align-items: center;
         }
 
-        .input-row input {
+        .input-row input,
+        .input-row select {
             padding: 11px 14px;
             background: var(--bg);
             border: 1px solid var(--border);
@@ -232,7 +233,8 @@
             transition: border-color 0.2s;
         }
 
-        .input-row input:focus {
+        .input-row input:focus,
+        .input-row select:focus {
             border-color: var(--accent);
         }
 
@@ -750,11 +752,12 @@
             <a href="#" class="logo" onclick="location.reload(); return false;">VidNest Stream</a>
             <div class="search-wrap">
                 <span class="search-icon">🔍</span>
-                <input type="text" id="searchInput" placeholder="Search movies & TV shows..." autocomplete="off">
+                <input type="text" id="searchInput" placeholder="Search movies, TV & anime..." autocomplete="off">
             </div>
             <nav class="nav-tabs">
                 <button class="nav-tab active" data-tab="movies">Movies</button>
                 <button class="nav-tab" data-tab="tv">TV Shows</button>
+                <button class="nav-tab" data-tab="anime">Anime</button>
                 <button class="nav-tab" data-tab="toprated">Top Rated</button>
                 <button class="nav-tab" data-tab="upcoming">Upcoming</button>
             </nav>
@@ -799,6 +802,28 @@
             </div>
         </section>
 
+        <!-- Anime -->
+        <section id="anime" class="section">
+            <div class="quick-play">
+                <h3>⚡ Quick Play Anime by AniList ID</h3>
+                <div class="input-row">
+                    <input type="number" id="animeId" placeholder="AniList ID" style="width: 130px;">
+                    <input type="number" id="animeEp" placeholder="Episode" value="1" style="width: 90px;">
+                    <select id="animeLang" style="width: 100px;">
+                        <option value="sub">Sub</option>
+                        <option value="dub">Dub</option>
+                    </select>
+                    <button class="btn btn-primary" onclick="quickPlayAnime()">▶ Play</button>
+                </div>
+            </div>
+            <div class="section-header">
+                <h2 class="section-title" id="animeTitle">Popular Anime</h2>
+            </div>
+            <div id="popularAnime" class="movies-grid">
+                <div class="loading"><div class="spinner"></div>Loading popular anime...</div>
+            </div>
+        </section>
+
         <!-- Top Rated -->
         <section id="toprated" class="section">
             <div class="section-header">
@@ -824,6 +849,7 @@
     <nav class="mobile-nav">
         <button class="active" data-tab="movies"><span>🎥</span>Movies</button>
         <button data-tab="tv"><span>📺</span>TV</button>
+        <button data-tab="anime"><span>🎌</span>Anime</button>
         <button data-tab="toprated"><span>⭐</span>Top</button>
         <button data-tab="upcoming"><span>🎬</span>Soon</button>
     </nav>
@@ -863,11 +889,13 @@
         const API_BASE = 'https://api.themoviedb.org/3';
         const IMG_BASE = 'https://image.tmdb.org/t/p/w500';
         const PLACEHOLDER = 'https://via.placeholder.com/500x750/16161f/666?text=No+Poster';
+        const ANILIST_URL = 'https://graphql.anilist.co';
 
         // Store full item data by id for details + play
         const store = {
             movie: {},
-            tv: {}
+            tv: {},
+            anime: {}
         };
 
         let currentUrl = '';
@@ -895,6 +923,7 @@
 
             loadPopularMovies();
             loadPopularTV();
+            loadPopularAnime();
             loadTopRated();
             loadUpcoming();
         });
@@ -911,6 +940,23 @@
             }
         }
 
+        async function fetchAniList(query, variables = {}) {
+            try {
+                const res = await fetch(ANILIST_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                    body: JSON.stringify({ query, variables })
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const json = await res.json();
+                if (json.errors) throw new Error(json.errors[0]?.message || 'AniList error');
+                return json.data;
+            } catch (err) {
+                console.error('AniList error:', err);
+                return null;
+            }
+        }
+
         async function loadPopularMovies() {
             const data = await fetchTMDB('/movie/popular', { page: 1 });
             if (data) renderGrid(data.results, 'popularMovies', 'movie');
@@ -919,6 +965,42 @@
         async function loadPopularTV() {
             const data = await fetchTMDB('/tv/popular', { page: 1 });
             if (data) renderGrid(data.results, 'popularTV', 'tv');
+        }
+
+        async function loadPopularAnime() {
+            const query = `
+                query ($page: Int, $perPage: Int) {
+                    Page(page: $page, perPage: $perPage) {
+                        media(type: ANIME, sort: POPULARITY_DESC, isAdult: false) {
+                            id
+                            title { romaji english native }
+                            coverImage { large medium }
+                            averageScore
+                            episodes
+                            status
+                            seasonYear
+                            description(asHtml: false)
+                            format
+                        }
+                    }
+                }
+            `;
+            const data = await fetchAniList(query, { page: 1, perPage: 24 });
+            if (data?.Page?.media) {
+                const items = data.Page.media.map(a => ({
+                    id: a.id,
+                    title: a.title.english || a.title.romaji || a.title.native,
+                    poster_path: a.coverImage?.large || a.coverImage?.medium,
+                    vote_average: a.averageScore ? a.averageScore / 10 : null,
+                    release_date: a.seasonYear ? `${a.seasonYear}-01-01` : null,
+                    overview: a.description ? a.description.replace(/<[^>]*>/g, '') : '',
+                    episodes: a.episodes,
+                    status: a.status,
+                    format: a.format,
+                    _type: 'anime'
+                }));
+                renderGrid(items, 'popularAnime', 'anime');
+            }
         }
 
         async function loadTopRated() {
@@ -939,9 +1021,26 @@
             container.innerHTML = '<div class="loading"><div class="spinner"></div>Searching...</div>';
             document.getElementById('moviesTitle').textContent = `Results for “${q}”`;
 
-            const [movies, shows] = await Promise.all([
+            const [movies, shows, animeData] = await Promise.all([
                 fetchTMDB('/search/movie', { query: q, page: 1 }),
-                fetchTMDB('/search/tv', { query: q, page: 1 })
+                fetchTMDB('/search/tv', { query: q, page: 1 }),
+                fetchAniList(`
+                    query ($search: String, $page: Int, $perPage: Int) {
+                        Page(page: $page, perPage: $perPage) {
+                            media(search: $search, type: ANIME, isAdult: false) {
+                                id
+                                title { romaji english native }
+                                coverImage { large medium }
+                                averageScore
+                                episodes
+                                status
+                                seasonYear
+                                description(asHtml: false)
+                                format
+                            }
+                        }
+                    }
+                `, { search: q, page: 1, perPage: 20 })
             ]);
 
             const results = [];
@@ -957,9 +1056,27 @@
                     results.push({ ...s, _type: 'tv', title: s.name, release_date: s.first_air_date });
                 });
             }
+            if (animeData?.Page?.media) {
+                animeData.Page.media.forEach(a => {
+                    const item = {
+                        id: a.id,
+                        title: a.title.english || a.title.romaji || a.title.native,
+                        poster_path: a.coverImage?.large || a.coverImage?.medium,
+                        vote_average: a.averageScore ? a.averageScore / 10 : null,
+                        release_date: a.seasonYear ? `${a.seasonYear}-01-01` : null,
+                        overview: a.description ? a.description.replace(/<[^>]*>/g, '') : '',
+                        episodes: a.episodes,
+                        status: a.status,
+                        format: a.format,
+                        _type: 'anime'
+                    };
+                    store.anime[a.id] = item;
+                    results.push(item);
+                });
+            }
 
             // Sort by popularity roughly
-            results.sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
+            results.sort((a, b) => (b.popularity || b.vote_average || 0) - (a.popularity || a.vote_average || 0));
             renderGrid(results, 'popularMovies', null); // mixed, use item._type
         }
 
@@ -976,11 +1093,17 @@
                 const title = item.title || item.name || 'Untitled';
                 const year = (item.release_date || item.first_air_date || '').slice(0, 4) || 'N/A';
                 const rating = item.vote_average ? item.vote_average.toFixed(1) : 'N/A';
-                const poster = item.poster_path ? IMG_BASE + item.poster_path : PLACEHOLDER;
+                let poster;
+                if (type === 'anime') {
+                    poster = item.poster_path || PLACEHOLDER;
+                } else {
+                    poster = item.poster_path ? IMG_BASE + item.poster_path : PLACEHOLDER;
+                }
 
                 // Cache full object
                 if (type === 'movie') store.movie[id] = item;
-                else store.tv[id] = item;
+                else if (type === 'tv') store.tv[id] = item;
+                else store.anime[id] = item;
 
                 return `
                     <article class="movie-card" data-id="${id}" data-type="${type}" role="button" tabindex="0">
@@ -1024,14 +1147,51 @@
         }
 
         async function openDetails(type, id) {
-            const cached = store[type]?.[id];
-            let data = cached;
+            let data = store[type]?.[id];
 
-            // Fetch extra details if we only have list data
-            if (!data || !data.overview) {
-                const endpoint = type === 'movie' ? `/movie/${id}` : `/tv/${id}`;
-                data = await fetchTMDB(endpoint);
-                if (data) store[type][id] = data;
+            if (type === 'anime') {
+                if (!data || !data.overview) {
+                    const query = `
+                        query ($id: Int) {
+                            Media(id: $id, type: ANIME) {
+                                id
+                                title { romaji english native }
+                                coverImage { large medium }
+                                averageScore
+                                episodes
+                                status
+                                seasonYear
+                                description(asHtml: false)
+                                format
+                                duration
+                            }
+                        }
+                    `;
+                    const res = await fetchAniList(query, { id });
+                    if (res?.Media) {
+                        const a = res.Media;
+                        data = {
+                            id: a.id,
+                            title: a.title.english || a.title.romaji || a.title.native,
+                            poster_path: a.coverImage?.large || a.coverImage?.medium,
+                            vote_average: a.averageScore ? a.averageScore / 10 : null,
+                            release_date: a.seasonYear ? `${a.seasonYear}-01-01` : null,
+                            overview: a.description ? a.description.replace(/<[^>]*>/g, '') : '',
+                            episodes: a.episodes,
+                            status: a.status,
+                            format: a.format,
+                            duration: a.duration
+                        };
+                        store.anime[id] = data;
+                    }
+                }
+            } else {
+                // Fetch extra details if we only have list data
+                if (!data || !data.overview) {
+                    const endpoint = type === 'movie' ? `/movie/${id}` : `/tv/${id}`;
+                    data = await fetchTMDB(endpoint);
+                    if (data) store[type][id] = data;
+                }
             }
 
             if (!data) {
@@ -1045,23 +1205,46 @@
             const year = (data.release_date || data.first_air_date || '').slice(0, 4) || 'N/A';
             const rating = data.vote_average ? data.vote_average.toFixed(1) : 'N/A';
             const overview = data.overview || 'No overview available.';
-            const poster = data.poster_path ? IMG_BASE + data.poster_path : PLACEHOLDER;
-            const runtime = data.runtime ? `${data.runtime} min` : (data.number_of_seasons ? `${data.number_of_seasons} seasons` : '');
+            let poster;
+            if (type === 'anime') {
+                poster = data.poster_path || PLACEHOLDER;
+            } else {
+                poster = data.poster_path ? IMG_BASE + data.poster_path : PLACEHOLDER;
+            }
+            const runtime = data.runtime ? `${data.runtime} min` : 
+                (data.number_of_seasons ? `${data.number_of_seasons} seasons` : 
+                (data.episodes ? `${data.episodes} eps` : 
+                (data.duration ? `${data.duration} min` : '')));
 
-            let tvPicker = '';
+            let picker = '';
             if (type === 'tv') {
                 const seasons = data.number_of_seasons || 1;
                 let seasonOpts = '';
                 for (let s = 1; s <= Math.min(seasons, 30); s++) {
                     seasonOpts += `<option value="${s}">${s}</option>`;
                 }
-                tvPicker = `
+                picker = `
                     <div class="tv-picker">
                         <label>Season
                             <select id="detailSeason">${seasonOpts}</select>
                         </label>
                         <label>Episode
                             <input type="number" id="detailEpisode" value="1" min="1" max="50">
+                        </label>
+                    </div>
+                `;
+            } else if (type === 'anime') {
+                const maxEp = data.episodes || 50;
+                picker = `
+                    <div class="tv-picker">
+                        <label>Episode
+                            <input type="number" id="detailEpisode" value="1" min="1" max="${maxEp}">
+                        </label>
+                        <label>Language
+                            <select id="detailLang">
+                                <option value="sub">Sub</option>
+                                <option value="dub">Dub</option>
+                            </select>
                         </label>
                     </div>
                 `;
@@ -1079,7 +1262,7 @@
                         <span class="rating">★ ${rating}</span>
                     </div>
                     <p class="details-overview">${escapeHtml(overview)}</p>
-                    ${tvPicker}
+                    ${picker}
                     <div class="details-actions">
                         <button class="btn btn-primary" onclick="playFromDetails()">▶ Watch Now</button>
                         <button class="btn btn-secondary" onclick="closeDetails()">Cancel</button>
@@ -1108,11 +1291,16 @@
             if (type === 'movie') {
                 url = `https://vidnest.fun/movie/${id}`;
                 displayTitle = title;
-            } else {
+            } else if (type === 'tv') {
                 const season = document.getElementById('detailSeason')?.value || 1;
                 const episode = document.getElementById('detailEpisode')?.value || 1;
                 url = `https://vidnest.fun/tv/${id}/${season}/${episode}`;
                 displayTitle = `${title} · S${season}E${episode}`;
+            } else if (type === 'anime') {
+                const episode = document.getElementById('detailEpisode')?.value || 1;
+                const lang = document.getElementById('detailLang')?.value || 'sub';
+                url = `https://vidnest.fun/anime/${id}/${episode}/${lang}`;
+                displayTitle = `${title} · Ep ${episode} (${lang.toUpperCase()})`;
             }
 
             closeDetails();
@@ -1166,6 +1354,15 @@
             openPlayer(`TV #${id} · S${season}E${episode}`, url);
         }
 
+        function quickPlayAnime() {
+            const id = document.getElementById('animeId').value.trim();
+            if (!id) return alert('Enter an AniList Anime ID');
+            const episode = document.getElementById('animeEp').value || 1;
+            const lang = document.getElementById('animeLang').value || 'sub';
+            const url = `https://vidnest.fun/anime/${id}/${episode}/${lang}`;
+            openPlayer(`Anime #${id} · Ep ${episode} (${lang.toUpperCase()})`, url);
+        }
+
         function switchTab(tabName) {
             document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
             document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
@@ -1178,6 +1375,9 @@
             // Reset search title if going back to movies without search
             if (tabName === 'movies' && !document.getElementById('searchInput').value.trim()) {
                 document.getElementById('moviesTitle').textContent = 'Popular Movies';
+            }
+            if (tabName === 'anime' && !document.getElementById('searchInput').value.trim()) {
+                document.getElementById('animeTitle').textContent = 'Popular Anime';
             }
         }
 
