@@ -275,6 +275,35 @@
             background: rgba(255, 255, 255, 0.14);
         }
 
+        .btn-load {
+            background: rgba(255, 255, 255, 0.06);
+            color: var(--text);
+            border: 1px solid var(--border);
+            padding: 14px 32px;
+            font-size: 0.95rem;
+            margin: 32px auto 0;
+            display: block;
+            min-width: 180px;
+            justify-content: center;
+        }
+
+        .btn-load:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+
+        .btn-load:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .load-more-wrap {
+            display: flex;
+            justify-content: center;
+            margin-top: 28px;
+        }
+
         /* ========== GRID ========== */
         .movies-grid {
             display: grid;
@@ -322,7 +351,6 @@
             transform: scale(1.06);
         }
 
-        /* Play button overlay - pointer-events none so clicks pass to card */
         .play-overlay {
             position: absolute;
             inset: 0;
@@ -499,7 +527,7 @@
             opacity: 1;
         }
 
-        /* Details modal (before play) */
+        /* Details modal */
         .details-overlay {
             display: none;
             position: fixed;
@@ -625,7 +653,6 @@
             padding: 0;
         }
 
-        /* TV season/episode picker inside details */
         .tv-picker {
             display: flex;
             gap: 10px;
@@ -781,6 +808,9 @@
             <div id="popularMovies" class="movies-grid">
                 <div class="loading"><div class="spinner"></div>Loading popular movies...</div>
             </div>
+            <div class="load-more-wrap">
+                <button class="btn btn-load" id="loadMoreMovies" onclick="loadMore('movies')" style="display:none;">Load More</button>
+            </div>
         </section>
 
         <!-- TV -->
@@ -799,6 +829,9 @@
             </div>
             <div id="popularTV" class="movies-grid">
                 <div class="loading"><div class="spinner"></div>Loading popular shows...</div>
+            </div>
+            <div class="load-more-wrap">
+                <button class="btn btn-load" id="loadMoreTV" onclick="loadMore('tv')" style="display:none;">Load More</button>
             </div>
         </section>
 
@@ -822,6 +855,9 @@
             <div id="popularAnime" class="movies-grid">
                 <div class="loading"><div class="spinner"></div>Loading popular anime...</div>
             </div>
+            <div class="load-more-wrap">
+                <button class="btn btn-load" id="loadMoreAnime" onclick="loadMore('anime')" style="display:none;">Load More</button>
+            </div>
         </section>
 
         <!-- Top Rated -->
@@ -832,6 +868,9 @@
             <div id="topRatedMovies" class="movies-grid">
                 <div class="loading"><div class="spinner"></div>Loading top rated...</div>
             </div>
+            <div class="load-more-wrap">
+                <button class="btn btn-load" id="loadMoreToprated" onclick="loadMore('toprated')" style="display:none;">Load More</button>
+            </div>
         </section>
 
         <!-- Upcoming -->
@@ -841,6 +880,9 @@
             </div>
             <div id="upcomingMovies" class="movies-grid">
                 <div class="loading"><div class="spinner"></div>Loading upcoming...</div>
+            </div>
+            <div class="load-more-wrap">
+                <button class="btn btn-load" id="loadMoreUpcoming" onclick="loadMore('upcoming')" style="display:none;">Load More</button>
             </div>
         </section>
     </main>
@@ -860,9 +902,7 @@
             <div class="details-header">
                 <button class="details-close" onclick="closeDetails()" aria-label="Close">×</button>
             </div>
-            <div class="details-body" id="detailsBody">
-                <!-- filled by JS -->
-            </div>
+            <div class="details-body" id="detailsBody"></div>
         </div>
     </div>
 
@@ -891,32 +931,42 @@
         const PLACEHOLDER = 'https://via.placeholder.com/500x750/16161f/666?text=No+Poster';
         const ANILIST_URL = 'https://graphql.anilist.co';
 
-        // Store full item data by id for details + play
-        const store = {
-            movie: {},
-            tv: {},
-            anime: {}
-        };
+        const store = { movie: {}, tv: {}, anime: {} };
 
+        // Pagination state for each section
+        const pages = {
+            movies: 1,
+            tv: 1,
+            anime: 1,
+            toprated: 1,
+            upcoming: 1,
+            search: 1
+        };
+        const hasMore = {
+            movies: true,
+            tv: true,
+            anime: true,
+            toprated: true,
+            upcoming: true,
+            search: true
+        };
+        let isLoading = false;
+        let currentSearchQuery = '';
         let currentUrl = '';
-        let currentDetails = null; // { type, id, data }
+        let currentDetails = null;
 
         document.addEventListener('DOMContentLoaded', () => {
-            // Desktop tabs
             document.querySelectorAll('.nav-tab').forEach(tab => {
                 tab.addEventListener('click', () => switchTab(tab.dataset.tab));
             });
-            // Mobile tabs
             document.querySelectorAll('.mobile-nav button').forEach(btn => {
                 btn.addEventListener('click', () => switchTab(btn.dataset.tab));
             });
 
-            // Search on Enter
             document.getElementById('searchInput').addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') searchContent();
             });
 
-            // Close modals on backdrop click
             document.getElementById('detailsOverlay').addEventListener('click', (e) => {
                 if (e.target === e.currentTarget) closeDetails();
             });
@@ -957,20 +1007,63 @@
             }
         }
 
-        async function loadPopularMovies() {
-            const data = await fetchTMDB('/movie/popular', { page: 1 });
-            if (data) renderGrid(data.results, 'popularMovies', 'movie');
+        function showLoadMore(section, show) {
+            const btn = document.getElementById(`loadMore${section.charAt(0).toUpperCase() + section.slice(1)}`);
+            if (btn) btn.style.display = show ? 'inline-flex' : 'none';
         }
 
-        async function loadPopularTV() {
-            const data = await fetchTMDB('/tv/popular', { page: 1 });
-            if (data) renderGrid(data.results, 'popularTV', 'tv');
+        function setLoadMoreLoading(section, loading) {
+            const btn = document.getElementById(`loadMore${section.charAt(0).toUpperCase() + section.slice(1)}`);
+            if (btn) {
+                btn.disabled = loading;
+                btn.textContent = loading ? 'Loading...' : 'Load More';
+            }
         }
 
-        async function loadPopularAnime() {
+        async function loadPopularMovies(append = false) {
+            if (isLoading) return;
+            isLoading = true;
+            if (append) setLoadMoreLoading('movies', true);
+
+            const page = pages.movies;
+            const data = await fetchTMDB('/movie/popular', { page });
+            if (data) {
+                renderGrid(data.results, 'popularMovies', 'movie', append);
+                hasMore.movies = page < (data.total_pages || 1) && page < 500;
+                showLoadMore('movies', hasMore.movies);
+                if (hasMore.movies) pages.movies++;
+            }
+            isLoading = false;
+            setLoadMoreLoading('movies', false);
+        }
+
+        async function loadPopularTV(append = false) {
+            if (isLoading) return;
+            isLoading = true;
+            if (append) setLoadMoreLoading('tv', true);
+
+            const page = pages.tv;
+            const data = await fetchTMDB('/tv/popular', { page });
+            if (data) {
+                renderGrid(data.results, 'popularTV', 'tv', append);
+                hasMore.tv = page < (data.total_pages || 1) && page < 500;
+                showLoadMore('tv', hasMore.tv);
+                if (hasMore.tv) pages.tv++;
+            }
+            isLoading = false;
+            setLoadMoreLoading('tv', false);
+        }
+
+        async function loadPopularAnime(append = false) {
+            if (isLoading) return;
+            isLoading = true;
+            if (append) setLoadMoreLoading('anime', true);
+
+            const page = pages.anime;
             const query = `
                 query ($page: Int, $perPage: Int) {
                     Page(page: $page, perPage: $perPage) {
+                        pageInfo { hasNextPage currentPage }
                         media(type: ANIME, sort: POPULARITY_DESC, isAdult: false) {
                             id
                             title { romaji english native }
@@ -985,7 +1078,7 @@
                     }
                 }
             `;
-            const data = await fetchAniList(query, { page: 1, perPage: 24 });
+            const data = await fetchAniList(query, { page, perPage: 24 });
             if (data?.Page?.media) {
                 const items = data.Page.media.map(a => ({
                     id: a.id,
@@ -999,34 +1092,87 @@
                     format: a.format,
                     _type: 'anime'
                 }));
-                renderGrid(items, 'popularAnime', 'anime');
+                renderGrid(items, 'popularAnime', 'anime', append);
+                hasMore.anime = data.Page.pageInfo?.hasNextPage === true;
+                showLoadMore('anime', hasMore.anime);
+                if (hasMore.anime) pages.anime++;
             }
+            isLoading = false;
+            setLoadMoreLoading('anime', false);
         }
 
-        async function loadTopRated() {
-            const data = await fetchTMDB('/movie/top_rated', { page: 1 });
-            if (data) renderGrid(data.results, 'topRatedMovies', 'movie');
+        async function loadTopRated(append = false) {
+            if (isLoading) return;
+            isLoading = true;
+            if (append) setLoadMoreLoading('toprated', true);
+
+            const page = pages.toprated;
+            const data = await fetchTMDB('/movie/top_rated', { page });
+            if (data) {
+                renderGrid(data.results, 'topRatedMovies', 'movie', append);
+                hasMore.toprated = page < (data.total_pages || 1) && page < 500;
+                showLoadMore('toprated', hasMore.toprated);
+                if (hasMore.toprated) pages.toprated++;
+            }
+            isLoading = false;
+            setLoadMoreLoading('toprated', false);
         }
 
-        async function loadUpcoming() {
-            const data = await fetchTMDB('/movie/upcoming', { page: 1 });
-            if (data) renderGrid(data.results, 'upcomingMovies', 'movie');
+        async function loadUpcoming(append = false) {
+            if (isLoading) return;
+            isLoading = true;
+            if (append) setLoadMoreLoading('upcoming', true);
+
+            const page = pages.upcoming;
+            const data = await fetchTMDB('/movie/upcoming', { page });
+            if (data) {
+                renderGrid(data.results, 'upcomingMovies', 'movie', append);
+                hasMore.upcoming = page < (data.total_pages || 1) && page < 500;
+                showLoadMore('upcoming', hasMore.upcoming);
+                if (hasMore.upcoming) pages.upcoming++;
+            }
+            isLoading = false;
+            setLoadMoreLoading('upcoming', false);
+        }
+
+        async function loadMore(section) {
+            if (isLoading || !hasMore[section]) return;
+            if (section === 'movies') await loadPopularMovies(true);
+            else if (section === 'tv') await loadPopularTV(true);
+            else if (section === 'anime') await loadPopularAnime(true);
+            else if (section === 'toprated') await loadTopRated(true);
+            else if (section === 'upcoming') await loadUpcoming(true);
         }
 
         async function searchContent() {
             const q = document.getElementById('searchInput').value.trim();
             if (!q) return;
+
+            currentSearchQuery = q;
+            pages.search = 1;
+            hasMore.search = true;
+
             switchTab('movies');
             const container = document.getElementById('popularMovies');
             container.innerHTML = '<div class="loading"><div class="spinner"></div>Searching...</div>';
             document.getElementById('moviesTitle').textContent = `Results for “${q}”`;
+            showLoadMore('movies', false);
+
+            await doSearch(q, 1, false);
+        }
+
+        async function doSearch(q, page, append) {
+            if (isLoading) return;
+            isLoading = true;
+            if (append) setLoadMoreLoading('movies', true);
 
             const [movies, shows, animeData] = await Promise.all([
-                fetchTMDB('/search/movie', { query: q, page: 1 }),
-                fetchTMDB('/search/tv', { query: q, page: 1 }),
+                fetchTMDB('/search/movie', { query: q, page }),
+                fetchTMDB('/search/tv', { query: q, page }),
                 fetchAniList(`
                     query ($search: String, $page: Int, $perPage: Int) {
                         Page(page: $page, perPage: $perPage) {
+                            pageInfo { hasNextPage }
                             media(search: $search, type: ANIME, isAdult: false) {
                                 id
                                 title { romaji english native }
@@ -1040,7 +1186,7 @@
                             }
                         }
                     }
-                `, { search: q, page: 1, perPage: 20 })
+                `, { search: q, page, perPage: 20 })
             ]);
 
             const results = [];
@@ -1075,24 +1221,44 @@
                 });
             }
 
-            // Sort by popularity roughly
             results.sort((a, b) => (b.popularity || b.vote_average || 0) - (a.popularity || a.vote_average || 0));
-            renderGrid(results, 'popularMovies', null); // mixed, use item._type
+            renderGrid(results, 'popularMovies', null, append);
+
+            const tmdbMore = (movies && page < (movies.total_pages || 1)) || (shows && page < (shows.total_pages || 1));
+            const animeMore = animeData?.Page?.pageInfo?.hasNextPage === true;
+            hasMore.search = tmdbMore || animeMore;
+            hasMore.movies = hasMore.search; // reuse movies button for search results
+            showLoadMore('movies', hasMore.search);
+            if (hasMore.search) pages.search++;
+
+            isLoading = false;
+            setLoadMoreLoading('movies', false);
         }
 
-        function renderGrid(items, containerId, forceType) {
+        // Override loadMore for search mode
+        const originalLoadMore = loadMore;
+        window.loadMore = async function(section) {
+            if (section === 'movies' && currentSearchQuery) {
+                if (isLoading || !hasMore.search) return;
+                await doSearch(currentSearchQuery, pages.search, true);
+            } else {
+                await originalLoadMore(section);
+            }
+        };
+
+        function renderGrid(items, containerId, forceType, append = false) {
             const container = document.getElementById(containerId);
             if (!items || items.length === 0) {
-                container.innerHTML = '<div class="empty-state">No results found</div>';
+                if (!append) container.innerHTML = '<div class="empty-state">No results found</div>';
                 return;
             }
 
-            container.innerHTML = items.map(item => {
+            const html = items.map(item => {
                 const type = forceType || item._type || 'movie';
                 const id = item.id;
                 const title = item.title || item.name || 'Untitled';
                 const year = (item.release_date || item.first_air_date || '').slice(0, 4) || 'N/A';
-                const rating = item.vote_average ? item.vote_average.toFixed(1) : 'N/A';
+                const rating = item.vote_average ? Number(item.vote_average).toFixed(1) : 'N/A';
                 let poster;
                 if (type === 'anime') {
                     poster = item.poster_path || PLACEHOLDER;
@@ -1100,7 +1266,6 @@
                     poster = item.poster_path ? IMG_BASE + item.poster_path : PLACEHOLDER;
                 }
 
-                // Cache full object
                 if (type === 'movie') store.movie[id] = item;
                 else if (type === 'tv') store.tv[id] = item;
                 else store.anime[id] = item;
@@ -1124,12 +1289,21 @@
                 `;
             }).join('');
 
-            // Attach click handlers (more reliable than inline)
+            if (append) {
+                // Remove any previous loading/empty states
+                const loading = container.querySelector('.loading, .empty-state');
+                if (loading) loading.remove();
+                container.insertAdjacentHTML('beforeend', html);
+            } else {
+                container.innerHTML = html;
+            }
+
             container.querySelectorAll('.movie-card').forEach(card => {
+                // Avoid double-binding
+                if (card.dataset.bound) return;
+                card.dataset.bound = '1';
                 card.addEventListener('click', () => {
-                    const id = Number(card.dataset.id);
-                    const type = card.dataset.type;
-                    openDetails(type, id);
+                    openDetails(card.dataset.type, Number(card.dataset.id));
                 });
                 card.addEventListener('keydown', (e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
@@ -1142,7 +1316,7 @@
 
         function escapeHtml(str) {
             const div = document.createElement('div');
-            div.textContent = str;
+            div.textContent = str || '';
             return div.innerHTML;
         }
 
@@ -1186,7 +1360,6 @@
                     }
                 }
             } else {
-                // Fetch extra details if we only have list data
                 if (!data || !data.overview) {
                     const endpoint = type === 'movie' ? `/movie/${id}` : `/tv/${id}`;
                     data = await fetchTMDB(endpoint);
@@ -1203,7 +1376,7 @@
 
             const title = data.title || data.name || 'Untitled';
             const year = (data.release_date || data.first_air_date || '').slice(0, 4) || 'N/A';
-            const rating = data.vote_average ? data.vote_average.toFixed(1) : 'N/A';
+            const rating = data.vote_average ? Number(data.vote_average).toFixed(1) : 'N/A';
             const overview = data.overview || 'No overview available.';
             let poster;
             if (type === 'anime') {
@@ -1211,9 +1384,9 @@
             } else {
                 poster = data.poster_path ? IMG_BASE + data.poster_path : PLACEHOLDER;
             }
-            const runtime = data.runtime ? `${data.runtime} min` : 
-                (data.number_of_seasons ? `${data.number_of_seasons} seasons` : 
-                (data.episodes ? `${data.episodes} eps` : 
+            const runtime = data.runtime ? `${data.runtime} min` :
+                (data.number_of_seasons ? `${data.number_of_seasons} seasons` :
+                (data.episodes ? `${data.episodes} eps` :
                 (data.duration ? `${data.duration} min` : '')));
 
             let picker = '';
@@ -1310,8 +1483,7 @@
         function openPlayer(title, url) {
             currentUrl = url;
             document.getElementById('modalTitle').textContent = title;
-            const frame = document.getElementById('playerFrame');
-            frame.src = url;
+            document.getElementById('playerFrame').src = url;
             document.getElementById('playerModal').classList.add('active');
             document.body.style.overflow = 'hidden';
         }
@@ -1372,16 +1544,18 @@
             document.querySelector(`.nav-tab[data-tab="${tabName}"]`)?.classList.add('active');
             document.querySelector(`.mobile-nav button[data-tab="${tabName}"]`)?.classList.add('active');
 
-            // Reset search title if going back to movies without search
-            if (tabName === 'movies' && !document.getElementById('searchInput').value.trim()) {
+            // Reset search state when leaving search results
+            if (tabName !== 'movies') {
+                currentSearchQuery = '';
+            }
+            if (tabName === 'movies' && !currentSearchQuery) {
                 document.getElementById('moviesTitle').textContent = 'Popular Movies';
             }
-            if (tabName === 'anime' && !document.getElementById('searchInput').value.trim()) {
+            if (tabName === 'anime') {
                 document.getElementById('animeTitle').textContent = 'Popular Anime';
             }
         }
 
-        // Keyboard
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
                 if (document.getElementById('playerModal').classList.contains('active')) {
